@@ -9,7 +9,8 @@ import (
 )
 
 // ParsePluginExecutorResponseUsage extracts token usage from a non-streaming plugin executor response.
-func ParsePluginExecutorResponseUsage(protocol string, payload []byte) usage.Detail {
+func ParsePluginExecutorResponseUsage(protocol string, payload []byte) (detail usage.Detail) {
+	defer func() { detail.QoderCredits = parseQoderCredits(payload) }()
 	if len(payload) == 0 {
 		return usage.Detail{}
 	}
@@ -37,6 +38,21 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 	if buffer == nil || len(payload) == 0 {
 		return
 	}
+	// Inspect the original plugin payload before response translation drops billing fields.
+	previous, _ := buffer.Detail()
+	defer func() {
+		credits := previous.QoderCredits
+		IterateStreamLines(payload, func(line []byte) {
+			if observed := parseQoderCredits(ExtractStreamJSONPayload(line)); observed != nil {
+				credits = observed
+			}
+		})
+		if credits != nil {
+			detail, _ := buffer.Detail()
+			detail.QoderCredits = credits
+			buffer.Observe(detail, true)
+		}
+	}()
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
 	case "claude":
 		IterateStreamLines(payload, func(line []byte) {

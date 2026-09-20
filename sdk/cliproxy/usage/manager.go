@@ -69,6 +69,8 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
+	// QoderCredits preserves upstream per-request billing; nil means unobserved.
+	QoderCredits        *QoderCredits
 	InputTokens         int64
 	OutputTokens        int64
 	ReasoningTokens     int64

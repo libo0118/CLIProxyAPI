@@ -1,9 +1,11 @@
 package config
 
 import (
+	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginstore"
 )
 
@@ -167,6 +169,20 @@ func (cfg *Config) SanitizeOpenAICompatibility() {
 		if e.BaseURL == "" {
 			// Skip providers with no base-url; treated as removed
 			continue
+		}
+		// The native DeepSeek catalog omits reasoning metadata. Use its documented
+		// contract for known IDs only; explicit per-model settings remain authoritative.
+		if endpoint, err := url.Parse(e.BaseURL); err == nil && strings.EqualFold(endpoint.Hostname(), "api.deepseek.com") {
+			for j := range e.Models {
+				model := &e.Models[j]
+				if model.Thinking != nil {
+					continue
+				}
+				switch strings.TrimSpace(model.Name) {
+				case "deepseek-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp":
+					model.Thinking = &registry.ThinkingSupport{Levels: []string{"low", "high", "max"}, ZeroAllowed: true}
+				}
+			}
 		}
 		out = append(out, e)
 	}

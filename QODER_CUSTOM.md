@@ -33,3 +33,9 @@ streaming:
 The new option defaults to false, retaining protocol Ping frames. When enabled, active Responses WebSocket turns send the private text event `{"type":"cpa.keepalive"}` while waiting for upstream data. Enable it only for clients that ignore unknown events, as Codex does. This is a CPA extension, not an OpenAI response lifecycle event; it adds no model output, timeline entry or usage. SSE behavior is unchanged.
 
 Heartbeats stop on completion, error or cancellation. They do not cover idle time between turns, remove upstream liveness limits, or recover a failed upstream. This does not guarantee that every intermediary or future client version accepts the extension.
+
+## Codex reasoning catalog
+
+OpenAI-compatible models at the exact native `api.deepseek.com` host receive documented `low/high/max` defaults for `deepseek-flash`, `deepseek-v4-pro`, and the accepted legacy Flash IDs when no explicit thinking configuration exists. Explicit model settings and other gateways are preserved. This prevents generic `low/medium/high` defaults from hiding `max` in the Codex catalog. The existing client-version gate for extended efforts remains intact. No new thinking-off option is introduced.
+
+Verify with `go test ./internal/config ./internal/client/codex/models`, compile `./cmd/server`, and check `/v1/models?client_version=cpa` and the actual client's version. Model-list checks do not consume inference quota. The corresponding Qoder plugin publishes model-specific `thinking_config.enabled.efforts`; WorkBuddy retains its own upstream effort names rather than copying the native DeepSeek contract.

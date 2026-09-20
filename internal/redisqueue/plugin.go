@@ -82,6 +82,13 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 
 	usageDetail := coreusage.EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
 	var qoderCredits *coreusage.QoderCredits
+	var workbuddyCredits *coreusage.WorkBuddyCredits
+	if strings.EqualFold(provider, "workbuddy") {
+		workbuddyCredits = usageDetail.WorkBuddyCredits
+		if workbuddyCredits == nil {
+			workbuddyCredits = &coreusage.WorkBuddyCredits{}
+		}
+	}
 	if strings.EqualFold(provider, "qoder") {
 		qoderCredits = usageDetail.QoderCredits
 		if qoderCredits == nil {
@@ -146,6 +153,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		ServiceTier:         serviceTier,
 		ResponseServiceTier: responseServiceTier,
 		QoderCredits:        qoderCredits,
+		WorkBuddyCredits:    workbuddyCredits,
 	})
 	if err != nil {
 		return
@@ -154,6 +162,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 }
 
 type queuedUsageDetail struct {
+	WorkBuddyCredits *coreusage.WorkBuddyCredits `json:"workbuddy_credits,omitempty"`
 	requestDetail
 	QoderCredits        *coreusage.QoderCredits  `json:"qoder_credits,omitempty"`
 	AccountingVersion   int                      `json:"accounting_version"`

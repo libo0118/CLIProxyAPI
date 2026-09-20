@@ -71,6 +71,7 @@ type Failure struct {
 type Detail struct {
 	// QoderCredits preserves upstream per-request billing; nil means unobserved.
 	QoderCredits        *QoderCredits
+	WorkBuddyCredits    *WorkBuddyCredits
 	InputTokens         int64
 	OutputTokens        int64
 	ReasoningTokens     int64

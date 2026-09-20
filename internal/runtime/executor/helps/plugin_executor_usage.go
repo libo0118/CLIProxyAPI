@@ -11,6 +11,7 @@ import (
 // ParsePluginExecutorResponseUsage extracts token usage from a non-streaming plugin executor response.
 func ParsePluginExecutorResponseUsage(protocol string, payload []byte) (detail usage.Detail) {
 	defer func() { detail.QoderCredits = parseQoderCredits(payload) }()
+	defer func() { detail.WorkBuddyCredits = parseWorkBuddyCredits(payload) }()
 	if len(payload) == 0 {
 		return usage.Detail{}
 	}
@@ -42,14 +43,19 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 	previous, _ := buffer.Detail()
 	defer func() {
 		credits := previous.QoderCredits
+		workbuddyCredits := previous.WorkBuddyCredits
 		IterateStreamLines(payload, func(line []byte) {
+			if observed := parseWorkBuddyCredits(ExtractStreamJSONPayload(line)); observed != nil {
+				workbuddyCredits = observed
+			}
 			if observed := parseQoderCredits(ExtractStreamJSONPayload(line)); observed != nil {
 				credits = observed
 			}
 		})
-		if credits != nil {
+		if credits != nil || workbuddyCredits != nil {
 			detail, _ := buffer.Detail()
 			detail.QoderCredits = credits
+			detail.WorkBuddyCredits = workbuddyCredits
 			buffer.Observe(detail, true)
 		}
 	}()

@@ -79,6 +79,11 @@ type StreamingConfig struct {
 	// <= 0 disables keep-alives. Default is 0.
 	KeepAliveSeconds int `yaml:"keepalive-seconds,omitempty" json:"keepalive-seconds,omitempty"`
 
+	// WebsocketApplicationKeepalive replaces Ping with private {"type":"cpa.keepalive"}
+	// text frames during active Responses WebSocket turns. Requires clients that ignore
+	// unknown events (such as Codex). Default false; KeepAliveSeconds must be positive.
+	WebsocketApplicationKeepalive bool `yaml:"websocket-application-keepalive,omitempty" json:"websocket-application-keepalive,omitempty"`
+
 	// BootstrapRetries controls how many times the server may retry a streaming request before any bytes are sent,
 	// to allow auth rotation / transient recovery.
 	// <= 0 disables bootstrap retries. Default is 0.

@@ -75,9 +75,16 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 			cancel(c.Request.Context().Err())
 			return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, c.Request.Context().Err()
 		case <-keepAliveC:
-			if errPing := writer.writePing(); errPing != nil {
-				cancel(errPing)
-				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errPing
+			var errKeepAlive error
+			if h != nil && h.Cfg != nil && h.Cfg.Streaming.WebsocketApplicationKeepalive {
+				// Private transport event: do not record it as model output or in the timeline.
+				errKeepAlive = writeResponsesWebsocketPayload(writer, nil, []byte(`{"type":"cpa.keepalive"}`), time.Now())
+			} else {
+				errKeepAlive = writer.writePing()
+			}
+			if errKeepAlive != nil {
+				cancel(errKeepAlive)
+				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errKeepAlive
 			}
 		case errMsg, ok := <-errs:
 			if !ok {
@@ -134,7 +141,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 				cancel(nil)
 				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, nil
 			}
-			if keepAliveTicker != nil && keepAliveInterval > 0 {
+			if !completed && keepAliveTicker != nil && keepAliveInterval > 0 {
 				keepAliveTicker.Reset(keepAliveInterval)
 			}
 
@@ -163,6 +170,10 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 					}
 				} else if isResponsesWebsocketCompletionEvent(eventType) {
 					completed = true
+					if keepAliveTicker != nil {
+						keepAliveTicker.Stop()
+						keepAliveC = nil
+					}
 					completedOutput = responseCompletedOutputFromPayload(payloads[i], outputItemsByIndex, outputItemsFallback)
 					completedResponseID = responseCompletedIDFromPayload(payloads[i])
 				}

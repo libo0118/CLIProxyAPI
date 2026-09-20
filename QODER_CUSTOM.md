@@ -21,3 +21,15 @@ docker build --build-arg VERSION=v7.3.5-qoder-credits.1 -t local/cli-proxy-api:v
 ```
 
 Before deployment, back up runtime configuration and verify that the existing native plugin loads in an isolated container. Preserve auth files, management assets and mounts. Repository synchronization alone does not deploy a server. Never commit credentials, runtime configuration, databases, auth files or build artifacts.
+
+## Optional Responses WebSocket application keepalive
+
+```yaml
+streaming:
+  keepalive-seconds: 20
+  websocket-application-keepalive: true
+```
+
+The new option defaults to false, retaining protocol Ping frames. When enabled, active Responses WebSocket turns send the private text event `{"type":"cpa.keepalive"}` while waiting for upstream data. Enable it only for clients that ignore unknown events, as Codex does. This is a CPA extension, not an OpenAI response lifecycle event; it adds no model output, timeline entry or usage. SSE behavior is unchanged.
+
+Heartbeats stop on completion, error or cancellation. They do not cover idle time between turns, remove upstream liveness limits, or recover a failed upstream. This does not guarantee that every intermediary or future client version accepts the extension.

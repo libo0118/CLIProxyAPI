@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/keypolicy"
+
 	log "github.com/sirupsen/logrus"
 )
 
@@ -343,6 +345,20 @@ func (m *Manager) RegisterNamed(name string, plugin Plugin) {
 // Publish enqueues a usage record for processing. If no plugin is registered
 // the record will be discarded downstream.
 func (m *Manager) Publish(ctx context.Context, record Record) {
+	// Budget settlement is synchronous and independent of the async statistics queue.
+	if store := keypolicy.StoreFromContext(ctx); store != nil {
+		if reservation := keypolicy.ReservationFromContext(ctx); reservation != nil {
+			detail := EnsureTokenBreakdownForProvider(record.Detail, record.Provider, record.ExecutorType)
+			b := detail.TokenBreakdown
+			if b.Valid() && b.Quality == TokenAccountingQualityComplete && b.TotalTokens > 0 {
+				tokens := keypolicy.Tokens{Input: b.Input.TotalTokens, Output: b.Output.TotalTokens, CacheRead: b.Input.CacheReadTokens, CacheWrite: b.Input.CacheWriteTokens}
+				if err := store.Settle(reservation.ID, tokens, time.Now()); err != nil {
+					log.Errorf("key budget settlement failed: %v", err)
+				}
+			}
+			// A zero/missing usage report is not proof of a free upstream attempt.
+		}
+	}
 	if m == nil {
 		return
 	}

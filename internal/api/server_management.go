@@ -28,6 +28,10 @@ func (s *Server) registerManagementRoutes() {
 	mgmt.Use(s.managementAvailabilityMiddleware(), s.mgmt.Middleware())
 	{
 		mgmt.GET("/config", s.mgmt.GetConfig)
+		mgmt.GET("/key-policies", s.getKeyPolicies)
+		mgmt.GET("/key-policies/report", s.getKeyPolicies)
+		mgmt.PUT("/key-policies/sync", s.syncKeyPolicyData)
+		mgmt.PUT("/key-policies/:key_id", s.putKeyPolicy)
 		mgmt.GET("/config.yaml", s.mgmt.GetConfigYAML)
 		mgmt.PUT("/config.yaml", s.mgmt.PutConfigYAML)
 		mgmt.GET("/latest-version", s.mgmt.GetLatestVersion)

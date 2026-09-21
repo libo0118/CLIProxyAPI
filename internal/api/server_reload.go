@@ -164,6 +164,14 @@ func (s *Server) UpdateClientsContext(ctx context.Context, cfg *config.Config) b
 		s.exampleAPIKeySafeModeActive.Store(true)
 	}
 	accessConfigApplied := s.applyAccessConfig(oldCfg, cfg)
+	if s.keyPolicies != nil {
+		if err := s.keyPolicies.SyncKeys(normalizedPolicyKeys(cfg.APIKeys)); err != nil {
+			log.Errorf("key policy key synchronization failed; budget admission remains fail-closed: %v", err)
+		}
+	}
+	if oldCfg != nil && oldCfg.KeyPolicyFile != cfg.KeyPolicyFile {
+		log.Warn("key-policy-file changes require a server restart; current authorization remains active")
+	}
 	if accessConfigApplied || exampleAPIKeySafeModeRequired {
 		s.exampleAPIKeySafeModeActive.Store(exampleAPIKeySafeModeRequired)
 	}

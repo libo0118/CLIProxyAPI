@@ -1,9 +1,22 @@
 package openai
 
 import (
+	"context"
 	codexmodels "github.com/router-for-me/CLIProxyAPI/v7/internal/client/codex/models"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 )
+
+func (h *OpenAIAPIHandler) scopedCodexClientModelsResponse(ctx context.Context, version string) map[string]any {
+	if h.AuthManager != nil {
+		if ids, scoped := h.AuthManager.KeyPolicyModelClients(ctx); scoped {
+			r := registry.GetGlobalRegistry()
+			providers := func(id string) []string { return r.GetModelProvidersForClients(id, ids) }
+			optimize := h.Cfg != nil && h.Cfg.CodexOptimizeMultiAgentV2
+			return codexmodels.BuildResponseForClient(r.GetModelsForClients(ids, "openai"), providers, optimize, version)
+		}
+	}
+	return h.codexClientModelsResponse(version)
+}
 
 func (h *OpenAIAPIHandler) codexClientModelsResponse(clientVersion ...string) map[string]any {
 	version := ""

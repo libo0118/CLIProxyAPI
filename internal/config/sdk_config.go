@@ -54,6 +54,10 @@ type SDKConfig struct {
 	// APIKeys is a list of keys for authenticating clients to this proxy server.
 	APIKeys []string `yaml:"api-keys" json:"api-keys"`
 
+	// KeyPolicyFile enables durable per-key authorization and soft spending caps.
+	// Empty keeps legacy behavior. The file and its marker must be persisted together.
+	KeyPolicyFile string `yaml:"key-policy-file,omitempty" json:"key-policy-file,omitempty"`
+
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
 	PassthroughHeaders bool `yaml:"passthrough-headers" json:"passthrough-headers"`

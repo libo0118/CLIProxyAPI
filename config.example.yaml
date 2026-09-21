@@ -41,6 +41,11 @@ api-keys:
   - "your-api-key-2"
   - "your-api-key-3"
 
+# Optional persistent per-client-key resource authorization and spending budgets.
+# Mount the containing directory persistently; one CPA process owns this ledger.
+# Empty disables this feature. See docs/key-policies.md before enabling it.
+key-policy-file: ""
+
 # Enable debug logging
 debug: false
 

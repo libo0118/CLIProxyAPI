@@ -25,6 +25,7 @@ func TestClaudeModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest("GET", "/v1/models", nil)
 	NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{}).ClaudeModels(ctx)
 
 	var response struct {
@@ -61,8 +62,10 @@ func TestClaudeModelsResponseDisablesModelListCloaking(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	baseHandler := &handlers.BaseAPIHandler{Cfg: &sdkconfig.SDKConfig{
+		// A real catalog request now supplies authorization scope via its context.
 		ClaudeCode: sdkconfig.ClaudeCodeConfig{DisableCloakingModelList: true},
 	}}
+	ctx.Request = httptest.NewRequest("GET", "/v1/models", nil)
 	NewClaudeCodeAPIHandler(baseHandler).ClaudeModels(ctx)
 
 	var response struct {

@@ -23,6 +23,7 @@ func TestGeminiModelsResponseUsesConfiguredDisplayName(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest("GET", "/v1beta/models", nil)
 	NewGeminiAPIHandler(&handlers.BaseAPIHandler{}).GeminiModels(ctx)
 
 	var response struct {

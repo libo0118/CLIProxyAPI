@@ -10,6 +10,7 @@ import (
 
 // ParsePluginExecutorResponseUsage extracts token usage from a non-streaming plugin executor response.
 func ParsePluginExecutorResponseUsage(protocol string, payload []byte) (detail usage.Detail) {
+	defer func() { detail.UpstreamResponseModel = pluginResponseModel(payload) }()
 	defer func() { detail.QoderCredits = parseQoderCredits(payload) }()
 	defer func() { detail.WorkBuddyCredits = parseWorkBuddyCredits(payload) }()
 	if len(payload) == 0 {
@@ -44,7 +45,11 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 	defer func() {
 		credits := previous.QoderCredits
 		workbuddyCredits := previous.WorkBuddyCredits
+		model := previous.UpstreamResponseModel
 		IterateStreamLines(payload, func(line []byte) {
+			if observed := pluginResponseModel(ExtractStreamJSONPayload(line)); observed != "" {
+				model = observed
+			}
 			if observed := parseWorkBuddyCredits(ExtractStreamJSONPayload(line)); observed != nil {
 				workbuddyCredits = observed
 			}
@@ -57,6 +62,10 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 			detail.QoderCredits = credits
 			detail.WorkBuddyCredits = workbuddyCredits
 			buffer.Observe(detail, true)
+		}
+		buffer.detail.UpstreamResponseModel = model
+		if model != "" {
+			buffer.ok = true
 		}
 	}()
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
@@ -92,11 +101,11 @@ func ObservePluginExecutorStreamUsage(protocol string, payload []byte, buffer *S
 					return
 				}
 			}
-			buffer.ObserveOpenAIStream(line)
+			buffer.observeOpenAIStream(line, false)
 		})
 	default:
 		IterateStreamLines(payload, func(line []byte) {
-			buffer.ObserveOpenAIStream(line)
+			buffer.observeOpenAIStream(line, false)
 		})
 	}
 }
@@ -165,6 +174,9 @@ func ObserveMergedStreamUsage(buffer *StreamUsageBuffer, update usage.Detail) {
 // MergeStreamUsageDetail merges existing stream usage with a newer update.
 func MergeStreamUsageDetail(existing, update usage.Detail) usage.Detail {
 	merged := update
+	if merged.UpstreamResponseModel == "" {
+		merged.UpstreamResponseModel = existing.UpstreamResponseModel
+	}
 	if merged.InputTokens == 0 && existing.InputTokens > 0 {
 		merged.InputTokens = existing.InputTokens
 	}

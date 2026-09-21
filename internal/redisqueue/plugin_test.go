@@ -31,21 +31,22 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 
 		plugin := &usageQueuePlugin{}
 		plugin.HandleUsage(ctx, coreusage.Record{
-			Provider:            "openai",
-			ExecutorType:        "KimiExecutor",
-			Model:               "gpt-5.4",
-			Alias:               "client-gpt",
-			APIKey:              "test-key",
-			AuthIndex:           "0",
-			AccessTokenSHA256:   "token-version-hash",
-			AuthType:            "apikey",
-			Source:              "user@example.com",
-			ReasoningEffort:     "medium",
-			ServiceTier:         "auto",
-			ResponseServiceTier: "default",
-			Generate:            coreusage.GenerateFlag(true),
-			RequestedAt:         time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC),
-			Latency:             1500 * time.Millisecond,
+			Provider:              "openai",
+			ExecutorType:          "KimiExecutor",
+			Model:                 "gpt-5.4",
+			Alias:                 "client-gpt",
+			UpstreamResponseModel: "reported-model",
+			APIKey:                "test-key",
+			AuthIndex:             "0",
+			AccessTokenSHA256:     "token-version-hash",
+			AuthType:              "apikey",
+			Source:                "user@example.com",
+			ReasoningEffort:       "medium",
+			ServiceTier:           "auto",
+			ResponseServiceTier:   "default",
+			Generate:              coreusage.GenerateFlag(true),
+			RequestedAt:           time.Date(2026, 4, 25, 0, 0, 0, 0, time.UTC),
+			Latency:               1500 * time.Millisecond,
 			Detail: coreusage.Detail{
 				InputTokens:  10,
 				OutputTokens: 20,
@@ -60,6 +61,7 @@ func TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess(t *testing.T) {
 		requireStringField(t, payload, "executor_type", "KimiExecutor")
 		requireStringField(t, payload, "model", "gpt-5.4")
 		requireStringField(t, payload, "alias", "client-gpt")
+		requireStringField(t, payload, "upstream_response_model", "reported-model")
 		requireStringField(t, payload, "endpoint", "POST /v1/chat/completions")
 		requireStringField(t, payload, "auth_type", "apikey")
 		requireStringField(t, payload, "access_token_sha256", "token-version-hash")
@@ -109,6 +111,7 @@ func TestUsageQueuePluginNormalizesDirectSDKUsageByProvider(t *testing.T) {
 				})
 
 				payload := popSinglePayload(t)
+				requireMissingField(t, payload, "upstream_response_model")
 				requireIntField(t, requireTokensPayload(t, payload), "total_tokens", tt.wantTotal)
 				requireTokenBreakdown(t, payload, coreusage.TokenAccountingQualityComplete, int64(tt.wantTotal))
 			})

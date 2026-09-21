@@ -24,32 +24,33 @@ import (
 )
 
 type UsageReporter struct {
-	provider            string
-	baseURL             string
-	executorType        string
-	model               string
-	alias               string
-	authID              string
-	authIndex           string
-	authMu              sync.RWMutex
-	accessTokenHash     string
-	authType            string
-	apiKey              string
-	sessionID           string
-	parentSessionID     string
-	source              string
-	reasoning           string
-	serviceTier         string
-	generate            bool
-	stream              bool
-	requestedAt         time.Time
-	ttftMu              sync.RWMutex
-	ttft                time.Duration
-	firstPacketDuration time.Duration
-	firstPacketSet      bool
-	ttftStart           time.Time
-	ttftSet             bool
-	once                sync.Once
+	upstreamResponseModel string // Protected by ttftMu, like the other observed response metadata.
+	provider              string
+	baseURL               string
+	executorType          string
+	model                 string
+	alias                 string
+	authID                string
+	authIndex             string
+	authMu                sync.RWMutex
+	accessTokenHash       string
+	authType              string
+	apiKey                string
+	sessionID             string
+	parentSessionID       string
+	source                string
+	reasoning             string
+	serviceTier           string
+	generate              bool
+	stream                bool
+	requestedAt           time.Time
+	ttftMu                sync.RWMutex
+	ttft                  time.Duration
+	firstPacketDuration   time.Duration
+	firstPacketSet        bool
+	ttftStart             time.Time
+	ttftSet               bool
+	once                  sync.Once
 }
 
 type usageExecutor interface {
@@ -442,33 +443,40 @@ func (r *UsageReporter) buildRecord(detail usage.Detail, failed bool, failures .
 
 func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, failed bool, fail usage.Failure) usage.Record {
 	if r == nil {
-		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
+		return usage.Record{Model: model, UpstreamResponseModel: validResponseModel(detail.UpstreamResponseModel), Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
+	}
+	upstreamModel := validResponseModel(detail.UpstreamResponseModel)
+	if upstreamModel == "" && model == r.model {
+		r.ttftMu.RLock()
+		upstreamModel = r.upstreamResponseModel
+		r.ttftMu.RUnlock()
 	}
 	return usage.Record{
-		Provider:            r.provider,
-		BaseURL:             r.baseURL,
-		ExecutorType:        r.executorType,
-		Model:               model,
-		Alias:               r.alias,
-		Source:              r.source,
-		APIKey:              r.apiKey,
-		SessionID:           r.sessionID,
-		ParentSessionID:     r.parentSessionID,
-		AuthID:              r.authID,
-		AuthIndex:           r.authIndex,
-		AccessTokenSHA256:   r.accessTokenFingerprint(),
-		AuthType:            r.authType,
-		ReasoningEffort:     r.reasoning,
-		ServiceTier:         r.serviceTier,
-		ResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
-		Generate:            usage.GenerateFlag(r.generate),
-		Stream:              r.stream,
-		RequestedAt:         r.requestedAt,
-		Latency:             r.latency(),
-		TTFT:                r.ttftDuration(),
-		Failed:              failed,
-		Fail:                fail,
-		Detail:              detail,
+		Provider:              r.provider,
+		BaseURL:               r.baseURL,
+		ExecutorType:          r.executorType,
+		Model:                 model,
+		Alias:                 r.alias,
+		UpstreamResponseModel: upstreamModel,
+		Source:                r.source,
+		APIKey:                r.apiKey,
+		SessionID:             r.sessionID,
+		ParentSessionID:       r.parentSessionID,
+		AuthID:                r.authID,
+		AuthIndex:             r.authIndex,
+		AccessTokenSHA256:     r.accessTokenFingerprint(),
+		AuthType:              r.authType,
+		ReasoningEffort:       r.reasoning,
+		ServiceTier:           r.serviceTier,
+		ResponseServiceTier:   strings.TrimSpace(detail.ResponseServiceTier),
+		Generate:              usage.GenerateFlag(r.generate),
+		Stream:                r.stream,
+		RequestedAt:           r.requestedAt,
+		Latency:               r.latency(),
+		TTFT:                  r.ttftDuration(),
+		Failed:                failed,
+		Fail:                  fail,
+		Detail:                detail,
 	}
 }
 
@@ -661,14 +669,23 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 		return
 	}
 	responseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
-	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+	responseModel := validResponseModel(detail.UpstreamResponseModel)
+	preservedModel := b.detail.UpstreamResponseModel
+	if (responseServiceTier == "" && responseModel == "") || hasNonZeroTokenUsage(detail) {
 		preservedTier := b.detail.ResponseServiceTier
 		b.detail = detail
 		if b.detail.ResponseServiceTier == "" {
 			b.detail.ResponseServiceTier = preservedTier
 		}
 	} else {
-		b.detail.ResponseServiceTier = responseServiceTier
+		if responseServiceTier != "" {
+			b.detail.ResponseServiceTier = responseServiceTier
+		}
+	}
+	if responseModel != "" {
+		b.detail.UpstreamResponseModel = responseModel
+	} else {
+		b.detail.UpstreamResponseModel = preservedModel
 	}
 	b.ok = true
 }
@@ -676,6 +693,10 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 // ObserveOpenAIStream records response-tier state and the latest usage from an
 // OpenAI-style stream while avoiding JSON parsing for irrelevant chunks.
 func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
+	b.observeOpenAIStream(line, true)
+}
+
+func (b *StreamUsageBuffer) observeOpenAIStream(line []byte, captureModel bool) {
 	if b == nil {
 		return
 	}
@@ -687,7 +708,8 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	hasUsageCandidate := bytes.Contains(payload, openAIStreamUsageMarker)
 	needTier := b.detail.ResponseServiceTier == "" || hasUsageCandidate
 	hasTierCandidate := needTier && bytes.Contains(payload, openAIStreamServiceTierMarker)
-	if !hasUsageCandidate && !hasTierCandidate {
+	hasModelCandidate := captureModel && (b.detail.UpstreamResponseModel == "" || hasUsageCandidate) && bytes.Contains(payload, []byte(`"model"`))
+	if !hasUsageCandidate && !hasTierCandidate && !hasModelCandidate {
 		return
 	}
 	if !gjson.ValidBytes(payload) {
@@ -706,7 +728,10 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	if hasTierCandidate {
 		detail.ResponseServiceTier = extractResponseServiceTierFromValidJSON(payload)
 	}
-	b.Observe(detail, usageOK || detail.ResponseServiceTier != "")
+	if hasModelCandidate {
+		detail.UpstreamResponseModel = responseModel(payload)
+	}
+	b.Observe(detail, usageOK || detail.ResponseServiceTier != "" || detail.UpstreamResponseModel != "")
 }
 
 // ObserveClaudeStream records and merges usage from a Claude SSE line.
@@ -714,7 +739,7 @@ func (b *StreamUsageBuffer) ObserveClaudeStream(line []byte) {
 	if b == nil {
 		return
 	}
-	if detail, ok := ParseClaudeStreamUsage(line); ok {
+	if detail, ok := ParseClaudeStreamUsage(line); ok || detail.UpstreamResponseModel != "" {
 		ObserveMergedStreamUsage(b, detail)
 	}
 }
@@ -745,7 +770,10 @@ func (b *StreamUsageBuffer) Detail() (usage.Detail, bool) {
 	return b.detail, true
 }
 
-func ParseCodexUsage(data []byte) (usage.Detail, bool) {
+func ParseCodexUsage(data []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(data)
+	}()
 	responseServiceTier := extractResponseServiceTier(data)
 	usageNode := gjson.ParseBytes(data).Get("response.usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
@@ -767,7 +795,8 @@ func ParseCodexImageToolUsage(data []byte) (usage.Detail, bool) {
 	return parseOpenAIStyleUsageNode(usageNode), true
 }
 
-func ParseOpenAIUsage(data []byte) usage.Detail {
+func ParseOpenAIUsage(data []byte) (result usage.Detail) {
+	defer func() { result.UpstreamResponseModel = responseModel(data) }()
 	responseServiceTier := extractResponseServiceTier(data)
 	usageNode := gjson.ParseBytes(data).Get("usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
@@ -878,7 +907,10 @@ func parseOpenAIStyleUsageNode(usageNode gjson.Result) usage.Detail {
 	return detail
 }
 
-func ParseOpenAIStreamUsage(line []byte) (usage.Detail, bool) {
+func ParseOpenAIStreamUsage(line []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(line)
+	}()
 	payload := jsonPayload(line)
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
@@ -896,7 +928,8 @@ func ParseOpenAIStreamUsage(line []byte) (usage.Detail, bool) {
 	return detail, true
 }
 
-func ParseClaudeUsage(data []byte) usage.Detail {
+func ParseClaudeUsage(data []byte) (result usage.Detail) {
+	defer func() { result.UpstreamResponseModel = responseModel(data) }()
 	usageNode := gjson.ParseBytes(data).Get("usage")
 	if !usageNode.Exists() {
 		return usage.Detail{}
@@ -904,7 +937,10 @@ func ParseClaudeUsage(data []byte) usage.Detail {
 	return parseClaudeUsageNode(usageNode)
 }
 
-func ParseClaudeStreamUsage(line []byte) (usage.Detail, bool) {
+func ParseClaudeStreamUsage(line []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(line)
+	}()
 	payload := jsonPayload(line)
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
@@ -1052,7 +1088,8 @@ func hasUsageDetail(detail usage.Detail) bool {
 	return hasNonZeroTokenUsage(detail)
 }
 
-func ParseInteractionsUsage(data []byte) usage.Detail {
+func ParseInteractionsUsage(data []byte) (result usage.Detail) {
+	defer func() { result.UpstreamResponseModel = responseModel(data) }()
 	root := gjson.ParseBytes(data)
 	node := firstExistingUsageNode(root, "usage", "total_usage", "metadata.total_usage", "metadata.usage", "usageMetadata", "usage_metadata", "interaction.usage", "interaction.total_usage", "interaction.metadata.total_usage")
 	if !node.Exists() {
@@ -1084,7 +1121,10 @@ func extractResponseServiceTierFromValidJSON(payload []byte) string {
 	return ""
 }
 
-func ParseInteractionsStreamUsage(line []byte) (usage.Detail, bool) {
+func ParseInteractionsStreamUsage(line []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(line)
+	}()
 	payload := jsonPayload(line)
 	if len(payload) == 0 {
 		payload = line
@@ -1099,7 +1139,8 @@ func ParseInteractionsStreamUsage(line []byte) (usage.Detail, bool) {
 	return detail, true
 }
 
-func ParseGeminiUsage(data []byte) usage.Detail {
+func ParseGeminiUsage(data []byte) (result usage.Detail) {
+	defer func() { result.UpstreamResponseModel = responseModel(data) }()
 	usageNode := gjson.ParseBytes(data)
 	node := usageNode.Get("usageMetadata")
 	if !node.Exists() {
@@ -1111,7 +1152,10 @@ func ParseGeminiUsage(data []byte) usage.Detail {
 	return parseGeminiFamilyUsageDetail(node)
 }
 
-func ParseGeminiStreamUsage(line []byte) (usage.Detail, bool) {
+func ParseGeminiStreamUsage(line []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(line)
+	}()
 	payload := jsonPayload(line)
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false
@@ -1163,7 +1207,8 @@ func invalidUsageTokenBreakdown(total int64) usage.TokenBreakdown {
 	}
 }
 
-func ParseAntigravityUsage(data []byte) usage.Detail {
+func ParseAntigravityUsage(data []byte) (result usage.Detail) {
+	defer func() { result.UpstreamResponseModel = responseModel(data) }()
 	usageNode := gjson.ParseBytes(data)
 	node := usageNode.Get("response.usageMetadata")
 	if !node.Exists() {
@@ -1178,7 +1223,10 @@ func ParseAntigravityUsage(data []byte) usage.Detail {
 	return parseGeminiFamilyUsageDetail(node)
 }
 
-func ParseAntigravityStreamUsage(line []byte) (usage.Detail, bool) {
+func ParseAntigravityStreamUsage(line []byte) (result usage.Detail, ok bool) {
+	defer func() {
+		result.UpstreamResponseModel = responseModel(line)
+	}()
 	payload := jsonPayload(line)
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return usage.Detail{}, false

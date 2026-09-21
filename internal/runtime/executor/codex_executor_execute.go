@@ -141,6 +141,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		eventData := bytes.TrimSpace(line[5:])
 		eventData = helps.RestoreCodexMultiAgentV2Response(eventData, optimizeMultiAgentV2)
 		eventType := gjson.GetBytes(eventData, "type").String()
+		reporter.ObserveUpstreamResponseModel(eventData)
 
 		if helps.HasMeaningfulCodexOutputDelta(eventData) {
 			sawOutputDelta = true

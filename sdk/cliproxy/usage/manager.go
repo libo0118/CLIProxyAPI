@@ -26,14 +26,16 @@ type Record struct {
 	// BaseURL stores the configured upstream base URL when available.
 	BaseURL string
 	// ExecutorType stores the concrete executor type that handled the request.
-	ExecutorType    string
-	Model           string
-	Alias           string
-	APIKey          string
-	SessionID       string
-	ParentSessionID string
-	AuthID          string
-	AuthIndex       string
+	ExecutorType string
+	Model        string
+	Alias        string
+	// UpstreamResponseModel is reported by the upstream, never inferred from the request.
+	UpstreamResponseModel string
+	APIKey                string
+	SessionID             string
+	ParentSessionID       string
+	AuthID                string
+	AuthIndex             string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -71,6 +73,7 @@ type Failure struct {
 
 // Detail holds the token usage breakdown.
 type Detail struct {
+	UpstreamResponseModel string
 	// QoderCredits preserves upstream per-request billing; nil means unobserved.
 	QoderCredits        *QoderCredits
 	WorkBuddyCredits    *WorkBuddyCredits

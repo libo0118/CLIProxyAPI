@@ -662,10 +662,13 @@ func (e *OpenAICompatExecutor) executeImagesStream(ctx context.Context, auth *cl
 			reporter.EnsurePublished(ctx)
 		}()
 		buffer := make([]byte, 32*1024)
+		modelStream := helps.ResponseModelStream{Reporter: reporter}
+		defer modelStream.Flush()
 		for {
 			n, errRead := httpResp.Body.Read(buffer)
 			if n > 0 {
 				chunk := bytes.Clone(buffer[:n])
+				modelStream.Observe(chunk)
 				helps.AppendAPIResponseChunk(ctx, e.cfg, chunk)
 				select {
 				case out <- cliproxyexecutor.StreamChunk{Payload: chunk}:

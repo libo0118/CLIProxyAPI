@@ -136,24 +136,25 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	}
 
 	payload, err := json.Marshal(queuedUsageDetail{
-		requestDetail:       detail,
-		AccountingVersion:   coreusage.TokenAccountingSchemaVersion,
-		TokenBreakdown:      usageDetail.TokenBreakdown,
-		Provider:            provider,
-		ExecutorType:        executorType,
-		Model:               modelName,
-		Alias:               aliasName,
-		Endpoint:            resolveEndpoint(ctx),
-		AuthType:            authType,
-		APIKey:              apiKey,
-		RequestID:           requestID,
-		SessionID:           sessionID,
-		ParentSessionID:     parentSessionID,
-		ReasoningEffort:     reasoningEffort,
-		ServiceTier:         serviceTier,
-		ResponseServiceTier: responseServiceTier,
-		QoderCredits:        qoderCredits,
-		WorkBuddyCredits:    workbuddyCredits,
+		requestDetail:         detail,
+		AccountingVersion:     coreusage.TokenAccountingSchemaVersion,
+		TokenBreakdown:        usageDetail.TokenBreakdown,
+		Provider:              provider,
+		ExecutorType:          executorType,
+		Model:                 modelName,
+		Alias:                 aliasName,
+		UpstreamResponseModel: strings.TrimSpace(record.UpstreamResponseModel),
+		Endpoint:              resolveEndpoint(ctx),
+		AuthType:              authType,
+		APIKey:                apiKey,
+		RequestID:             requestID,
+		SessionID:             sessionID,
+		ParentSessionID:       parentSessionID,
+		ReasoningEffort:       reasoningEffort,
+		ServiceTier:           serviceTier,
+		ResponseServiceTier:   responseServiceTier,
+		QoderCredits:          qoderCredits,
+		WorkBuddyCredits:      workbuddyCredits,
 	})
 	if err != nil {
 		return
@@ -164,22 +165,23 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 type queuedUsageDetail struct {
 	WorkBuddyCredits *coreusage.WorkBuddyCredits `json:"workbuddy_credits,omitempty"`
 	requestDetail
-	QoderCredits        *coreusage.QoderCredits  `json:"qoder_credits,omitempty"`
-	AccountingVersion   int                      `json:"accounting_version"`
-	TokenBreakdown      coreusage.TokenBreakdown `json:"token_breakdown"`
-	Provider            string                   `json:"provider"`
-	ExecutorType        string                   `json:"executor_type"`
-	Model               string                   `json:"model"`
-	Alias               string                   `json:"alias"`
-	Endpoint            string                   `json:"endpoint"`
-	AuthType            string                   `json:"auth_type"`
-	APIKey              string                   `json:"api_key"`
-	RequestID           string                   `json:"request_id"`
-	SessionID           string                   `json:"session_id,omitempty"`
-	ParentSessionID     string                   `json:"parent_session_id,omitempty"`
-	ReasoningEffort     string                   `json:"reasoning_effort"`
-	ServiceTier         string                   `json:"service_tier"`
-	ResponseServiceTier string                   `json:"response_service_tier,omitempty"`
+	QoderCredits          *coreusage.QoderCredits  `json:"qoder_credits,omitempty"`
+	AccountingVersion     int                      `json:"accounting_version"`
+	TokenBreakdown        coreusage.TokenBreakdown `json:"token_breakdown"`
+	Provider              string                   `json:"provider"`
+	ExecutorType          string                   `json:"executor_type"`
+	Model                 string                   `json:"model"`
+	Alias                 string                   `json:"alias"`
+	UpstreamResponseModel string                   `json:"upstream_response_model,omitempty"`
+	Endpoint              string                   `json:"endpoint"`
+	AuthType              string                   `json:"auth_type"`
+	APIKey                string                   `json:"api_key"`
+	RequestID             string                   `json:"request_id"`
+	SessionID             string                   `json:"session_id,omitempty"`
+	ParentSessionID       string                   `json:"parent_session_id,omitempty"`
+	ReasoningEffort       string                   `json:"reasoning_effort"`
+	ServiceTier           string                   `json:"service_tier"`
+	ResponseServiceTier   string                   `json:"response_service_tier,omitempty"`
 }
 
 type requestDetail struct {

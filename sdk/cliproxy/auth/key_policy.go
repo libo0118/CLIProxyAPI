@@ -39,10 +39,12 @@ func (m *Manager) KeyPolicyResources() []keypolicy.Resource {
 		if id == "" {
 			continue
 		}
-		kind, label := "oauth", a.Label
+		kind, label, fileName := "oauth", a.Label, ""
 		if a.AuthKind() == AuthKindAPIKey {
 			kind = "api_key"
 			label = a.Attributes["compat_name"]
+		} else if a.FileName != "" {
+			fileName = filepath.Base(a.FileName)
 		}
 		if label == "" && a.FileName != "" {
 			label = filepath.Base(a.FileName)
@@ -57,7 +59,7 @@ func (m *Manager) KeyPolicyResources() []keypolicy.Resource {
 			}
 		}
 		sort.Strings(models)
-		out = append(out, keypolicy.Resource{ResourceID: id, Label: label, Provider: a.Provider, Kind: kind, Disabled: a.Disabled, Models: models})
+		out = append(out, keypolicy.Resource{ResourceID: id, Label: label, FileName: fileName, Provider: a.Provider, Kind: kind, Disabled: a.Disabled, Models: models})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ResourceID < out[j].ResourceID })
 	return out

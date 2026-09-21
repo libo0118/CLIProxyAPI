@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,29 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/keypolicy"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+func TestKeyPolicyResourceExposesMatchingAuthFile(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+	a := &Auth{ID: "qoder-intl-test.json", Index: "stable-auth-index", Provider: "qoder", FileName: "/private/auths/qoder-intl-test.json", Label: "Account [INTL]"}
+	if _, err := m.Register(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	resources := m.KeyPolicyResources()
+	if len(resources) != 1 || resources[0].ResourceID != "stable-auth-index" {
+		t.Fatalf("resource identity changed: %+v", resources)
+	}
+	raw, err := json.Marshal(resources[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visible map[string]any
+	if err = json.Unmarshal(raw, &visible); err != nil {
+		t.Fatal(err)
+	}
+	if visible["file_name"] != "qoder-intl-test.json" {
+		t.Fatalf("missing comparable filename: %s", raw)
+	}
+}
 
 type budgetTestExecutor struct {
 	schedulerTestExecutor

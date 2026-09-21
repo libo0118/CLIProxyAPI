@@ -39,6 +39,7 @@ type Key struct {
 type Resource struct {
 	ResourceID string   `json:"resource_id"`
 	Label      string   `json:"label"`
+	FileName   string   `json:"file_name,omitempty"`
 	Provider   string   `json:"provider"`
 	Kind       string   `json:"kind"`
 	Disabled   bool     `json:"disabled"`

@@ -458,6 +458,15 @@ func dedupeStrings(values []string) []string {
 
 // ResetQuota clears quota/cooldown state for an auth and resumes registry routing.
 func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []string, error) {
+	return m.resetQuota(ctx, authID, nil)
+}
+
+// RecoverCodexQuota clears only usage-limit cooldowns confirmed by a fresh quota query.
+func (m *Manager) RecoverCodexQuota(ctx context.Context, authID string, generation uint64) (*Auth, []string, error) {
+	return m.resetQuota(ctx, authID, &generation)
+}
+
+func (m *Manager) resetQuota(ctx context.Context, authID string, observedGeneration *uint64) (*Auth, []string, error) {
 	if m == nil {
 		return nil, nil, nil
 	}
@@ -478,6 +487,10 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		m.mu.Unlock()
 		return nil, nil, nil
 	}
+	if observedGeneration != nil && (auth.Generation != *observedGeneration || auth.Provider != "codex" || auth.Disabled || auth.Status == StatusDisabled) {
+		m.mu.Unlock()
+		return nil, nil, nil
+	}
 
 	var cooldownRecordsBefore []CooldownStateRecord
 	trackCooldownState := m.cooldownStore != nil
@@ -485,21 +498,52 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		cooldownRecordsBefore = m.cooldownStateRecordsForAuthLocked(auth, now)
 	}
 
-	for modelKey, state := range auth.ModelStates {
-		if strings.TrimSpace(modelKey) == "" {
-			continue
+	if observedGeneration != nil {
+		changed := false
+		for modelKey, state := range auth.ModelStates {
+			if state == nil || state.Status == StatusDisabled || !state.Quota.Exceeded {
+				continue
+			}
+			if codexUsageLimitError(state.LastError) || (state.LastError == nil && state.Quota.Reason == "credential_quota") {
+				resetModelState(state, now)
+				models = append(models, modelKey)
+				changed = true
+			}
 		}
-		models = append(models, modelKey)
-		if state != nil {
-			resetModelState(state, now)
+		if auth.Quota.Exceeded && (auth.Quota.Reason == "credential_quota" || codexUsageLimitError(auth.LastError) || (changed && auth.Quota.Reason == "quota")) {
+			applyCooldownFields(&auth.Quota, QuotaState{})
+			auth.Unavailable = false
+			auth.NextRetryAfter = time.Time{}
+			changed = true
 		}
-	}
-	if clearCooldownStateForAuth(auth, now) {
-		if len(models) == 0 {
-			models = append(models, registeredModels...)
+		if !changed {
+			m.mu.Unlock()
+			return nil, nil, nil
 		}
-	} else if len(auth.ModelStates) > 0 {
-		updateAggregatedAvailability(auth, now)
+		if codexUsageLimitError(auth.LastError) {
+			auth.LastError = nil
+			auth.StatusMessage = ""
+		}
+		if len(auth.ModelStates) > 0 {
+			updateAggregatedAvailability(auth, now)
+		}
+	} else {
+		for modelKey, state := range auth.ModelStates {
+			if strings.TrimSpace(modelKey) == "" {
+				continue
+			}
+			models = append(models, modelKey)
+			if state != nil {
+				resetModelState(state, now)
+			}
+		}
+		if clearCooldownStateForAuth(auth, now) {
+			if len(models) == 0 {
+				models = append(models, registeredModels...)
+			}
+		} else if len(auth.ModelStates) > 0 {
+			updateAggregatedAvailability(auth, now)
+		}
 	}
 
 	if len(models) == 0 {
@@ -546,6 +590,22 @@ func (m *Manager) ResetQuota(ctx context.Context, authID string) (*Auth, []strin
 		return nil, nil, errPersist
 	}
 	return snapshot, models, nil
+}
+
+func codexUsageLimitError(err *Error) bool {
+	if err == nil || err.HTTPStatus != http.StatusTooManyRequests {
+		return false
+	}
+	if err.Code == "usage_limit_reached" {
+		return true
+	}
+	var payload struct {
+		Error struct {
+			Type string `json:"type"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	return json.Unmarshal([]byte(err.Message), &payload) == nil && (payload.Error.Type == "usage_limit_reached" || payload.Error.Code == "usage_limit_reached")
 }
 
 func modelsForRegisteredAuth(authID string) []string {

@@ -40,9 +40,10 @@ type apiCallRequest struct {
 }
 
 type apiCallResponse struct {
-	StatusCode int                 `json:"status_code"`
-	Header     map[string][]string `json:"header"`
-	Body       string              `json:"body"`
+	StatusCode     int                 `json:"status_code"`
+	Header         map[string][]string `json:"header"`
+	Body           string              `json:"body"`
+	QuotaRecovered bool                `json:"quota_recovered,omitempty"`
 }
 
 // APICall makes a generic HTTP request on behalf of the management API caller.
@@ -232,9 +233,10 @@ func (h *Handler) APICall(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, apiCallResponse{
-		StatusCode: resp.StatusCode,
-		Header:     resp.Header,
-		Body:       string(respBody),
+		StatusCode:     resp.StatusCode,
+		Header:         resp.Header,
+		Body:           string(respBody),
+		QuotaRecovered: h.recoverCodexQuota(c.Request.Context(), auth, req, resp, respBody, token),
 	})
 }
 

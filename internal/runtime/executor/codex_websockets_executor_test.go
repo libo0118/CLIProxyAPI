@@ -18,6 +18,7 @@ import (
 	"github.com/gorilla/websocket"
 	internalcache "github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -992,7 +993,9 @@ func TestCodexWebsocketsExecuteStreamMapsMessageTooBigClose(t *testing.T) {
 		ResponseFormat: sdktranslator.FromString("openai-response"),
 	}
 
-	result, err := exec.ExecuteStream(context.Background(), auth, req, opts)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	result, err := exec.ExecuteStream(ctx, auth, req, opts)
 	if err != nil {
 		t.Fatalf("ExecuteStream() error = %v", err)
 	}
@@ -1018,6 +1021,11 @@ func TestCodexWebsocketsExecuteStreamMapsMessageTooBigClose(t *testing.T) {
 		requestErr, ok := chunk.Err.(interface{ IsRequestScoped() bool })
 		if !ok || !requestErr.IsRequestScoped() {
 			t.Fatalf("message-too-big error should be request scoped, got %T", chunk.Err)
+		}
+		fields := logging.UpstreamDiagnosticSnapshot(ginCtx)
+		upstream := fields["upstream_response"].(map[string]any)
+		if upstream["close_code"] != websocket.CloseMessageTooBig || upstream["status_code"] != 101 || upstream["error_status_code"] != 413 {
+			t.Fatalf("upstream 1009 evidence lost after error mapping: %#v", upstream)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for error stream chunk")

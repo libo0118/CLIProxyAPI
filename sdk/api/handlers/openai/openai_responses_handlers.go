@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/client/codex/optimize-multi-agent-v2"
@@ -49,15 +50,18 @@ func writeResponsesSSEChunk(w io.Writer, chunk []byte) {
 }
 
 type responsesSSEFramer struct {
-	pending              []byte
-	outputItems          map[int][]byte
-	outputOrder          []int
-	unindexedOutputItems [][]byte
-	lastEvent            string
-	terminalEvent        string
-	terminalError        *interfaces.ErrorMessage
-	failureEvent         string
-	dataFrames           int
+	pending                []byte
+	outputItems            map[int][]byte
+	outputOrder            []int
+	unindexedOutputItems   [][]byte
+	lastEvent              string
+	terminalEvent          string
+	receivedTerminalEvent  string
+	terminalError          *interfaces.ErrorMessage
+	failureEvent           string
+	dataFrames             int
+	missingTerminal        bool
+	generatedTerminalEvent string
 }
 
 func (f *responsesSSEFramer) WriteChunk(w io.Writer, chunk []byte) {
@@ -134,13 +138,20 @@ func (f *responsesSSEFramer) repairFrame(frame []byte) []byte {
 	f.dataFrames++
 
 	payloadType := gjson.GetBytes(payload, "type").String()
+	streamEvent := responsesSSEEventName(frame)
+	receivedEvent := payloadType
+	if responsesSSETerminalEvent(streamEvent) || receivedEvent == "" {
+		receivedEvent = streamEvent
+	}
+	if responsesSSETerminalEvent(receivedEvent) {
+		f.receivedTerminalEvent = receivedEvent
+	}
 	if responsesSSEErrorEvent(payloadType) || responsesSSEPayloadHasError(payload) {
 		if payloadType != "" {
 			f.lastEvent = sanitizeResponsesStreamEventName(payloadType)
 		}
 		return f.repairErrorPayload(payload)
 	}
-	streamEvent := responsesSSEEventName(frame)
 	eventType := payloadType
 	if responsesSSETerminalEvent(streamEvent) {
 		eventType = streamEvent
@@ -190,6 +201,9 @@ func (f *responsesSSEFramer) repairErrorPayload(payload []byte) []byte {
 		failureEvent = "error"
 	}
 	f.terminalEvent = failureEvent
+	if f.receivedTerminalEvent != failureEvent {
+		f.generatedTerminalEvent = failureEvent
+	}
 	errText := responsesStreamErrorText(errMsg, status)
 	seq := 0
 	if s := gjson.GetBytes(payload, "sequence_number"); s.Exists() {
@@ -659,7 +673,19 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 
 	// New core execution path
 	modelName := gjson.GetBytes(rawJSON, "model").String()
-	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	cliCtx, cancel := h.GetContextWithCancel(h, c, context.Background())
+	framer := &responsesSSEFramer{failureEvent: "error"}
+	if isCodexResponsesClientRequest(c) {
+		framer.failureEvent = "response.failed"
+	}
+	diagnostics := &responsesStreamDiagnostics{ResponseWriter: c.Writer, started: time.Now(), parameters: responsesDiagnosticParameters(rawJSON)}
+	c.Writer = diagnostics
+	flusher = diagnostics
+	defer diagnostics.finish(c, cliCtx, modelName, len(rawJSON), framer)
+	cliCancel := func(err error) {
+		diagnostics.cancelErr = err
+		cancel(err)
+	}
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "")
 
 	setSSEHeaders := func() {
@@ -668,11 +694,6 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 		c.Header("Connection", "keep-alive")
 		c.Header("Access-Control-Allow-Origin", "*")
 	}
-	failureEvent := "error"
-	if isCodexResponsesClientRequest(c) {
-		failureEvent = "response.failed"
-	}
-	framer := &responsesSSEFramer{failureEvent: failureEvent}
 	var initialOutput bytes.Buffer
 
 	// Peek at the first complete SSE data frame.
@@ -717,6 +738,7 @@ func (h *OpenAIResponsesAPIHandler) handleStreamingResponse(c *gin.Context, rawJ
 				framer.Flush(&initialOutput)
 				errMsg, hasPendingError := handlers.PendingStreamError(errChan)
 				if !hasPendingError && framer.terminalEvent == "" {
+					framer.missingTerminal = true
 					message := "upstream stream closed before first payload"
 					if framer.dataFrames > 0 {
 						message = "upstream stream closed before a terminal event"
@@ -994,10 +1016,12 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 		}
 		if isCodexResponsesClientRequest(c) {
 			chunk := handlers.BuildOpenAIResponsesStreamFailedChunk(status, errText, seq)
+			framer.generatedTerminalEvent = "response.failed"
 			_, _ = fmt.Fprintf(c.Writer, "\nevent: response.failed\ndata: %s\n\n", string(chunk))
 			return
 		}
 		chunk := handlers.BuildOpenAIResponsesStreamErrorChunk(status, errText, seq)
+		framer.generatedTerminalEvent = "error"
 		_, _ = fmt.Fprintf(c.Writer, "\nevent: error\ndata: %s\n\n", string(chunk))
 	}
 
@@ -1021,6 +1045,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesStream(c *gin.Context, flush
 			if framer.terminalEvent != "" {
 				return nil
 			}
+			framer.missingTerminal = true
 			lastEvent := framer.lastEvent
 			if lastEvent == "" {
 				lastEvent = "none"

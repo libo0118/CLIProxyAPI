@@ -305,8 +305,12 @@ func (h *Handler) GetRequestLogByID(c *gin.Context) {
 		}
 		name := entry.Name()
 		if strings.HasSuffix(name, suffix) {
-			matchedFile = name
-			break
+			if matchedFile == "" || strings.HasPrefix(name, "diagnostic-") {
+				matchedFile = name
+			}
+			if strings.HasPrefix(name, "diagnostic-") {
+				break
+			}
 		}
 	}
 

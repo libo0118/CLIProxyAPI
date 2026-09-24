@@ -109,6 +109,10 @@ func (codexWebsocketMessageTooBigError) IsRequestScoped() bool {
 	return true
 }
 
+func (codexWebsocketMessageTooBigError) WebsocketCloseCode() int {
+	return websocket.CloseMessageTooBig
+}
+
 func mapCodexWebsocketReadError(err error) error {
 	if err == nil {
 		return nil

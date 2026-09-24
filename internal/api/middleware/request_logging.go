@@ -64,6 +64,12 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			wrapper.logOnErrorOnly = true
 		}
 		c.Writer = wrapper
+		if diagnosticLogger, ok := logger.(interface {
+			LogRequestDiagnostic(string, map[string]any) error
+		}); ok {
+			// WebSocket turns must persist while the HTTP connection is still open.
+			c.Set(logging.RequestDiagnosticWriterContextKey, diagnosticLogger.LogRequestDiagnostic)
+		}
 		attachRequestLogSources(c, logger, loggerEnabled)
 		attachDeferredRequestBodyCapture(c.Request, logger, requestInfo, loggerEnabled, captureBody)
 
@@ -74,6 +80,17 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 		if err = wrapper.Finalize(c); err != nil {
 			// Log error but don't interrupt the response
 			// In a real implementation, you might want to use a proper logger here
+		}
+		if diagnosticLogger, ok := logger.(interface {
+			LogRequestDiagnostic(string, map[string]any) error
+		}); ok {
+			if value, exists := c.Get(logging.RequestDiagnosticContextKey); exists {
+				if fields, valid := value.(map[string]any); valid {
+					if errLog := diagnosticLogger.LogRequestDiagnostic(requestInfo.RequestID, fields); errLog != nil {
+						log.Warnf("failed to persist request diagnostic: %s", logging.SafeErrorDiagnostic(errLog))
+					}
+				}
+			}
 		}
 	}
 }

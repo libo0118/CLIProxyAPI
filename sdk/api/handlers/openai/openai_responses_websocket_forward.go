@@ -43,6 +43,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 		opts = options[0]
 	}
 	toolCacheTurn := opts.toolCacheTurn
+	diagnostic := writer.diagnostic.Load()
 	completed := false
 	completedOutput := []byte("[]")
 	completedResponseID := ""
@@ -83,6 +84,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 				errKeepAlive = writer.writePing()
 			}
 			if errKeepAlive != nil {
+				diagnostic.recordWrite(nil, errKeepAlive)
 				cancel(errKeepAlive)
 				return completedOutput, completedResponseID, sortedStringSet(pendingToolCallIDs), nil, errKeepAlive
 			}
@@ -125,6 +127,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 		case chunk, ok := <-data:
 			if !ok {
 				if !completed {
+					diagnostic.missingTerminal()
 					errMsg := &interfaces.ErrorMessage{
 						StatusCode: http.StatusRequestTimeout,
 						Error:      fmt.Errorf("stream closed before response.completed"),
@@ -147,6 +150,7 @@ func (h *OpenAIResponsesAPIHandler) forwardResponsesWebsocket(
 
 			payloads := websocketJSONPayloadsFromChunk(chunk)
 			for i := range payloads {
+				diagnostic.observe(payloads[i])
 				collectResponsesWebsocketOutputItem(payloads[i], outputItemsByIndex, &outputItemsFallback)
 				eventType := gjson.GetBytes(payloads[i], "type").String()
 				if isResponsesWebsocketCompletionEvent(eventType) && (opts.preserveCompletionOutput == nil || !opts.preserveCompletionOutput()) {

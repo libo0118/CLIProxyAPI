@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -105,9 +106,10 @@ func websocketClosePayloadForUpstreamError(err error) (bool, []byte) {
 }
 
 type responsesWebsocketWriter struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
-	closing atomic.Bool
+	conn       *websocket.Conn
+	writeMu    sync.Mutex
+	closing    atomic.Bool
+	diagnostic atomic.Pointer[responsesWebsocketDiagnostics]
 }
 
 func newResponsesWebsocketWriter(conn *websocket.Conn) *responsesWebsocketWriter {
@@ -176,6 +178,7 @@ func (w *responsesWebsocketWriter) closeWithPayload(payload []byte) (bool, error
 	defer w.writeMu.Unlock()
 
 	errWrite := w.conn.WriteMessage(websocket.TextMessage, payload)
+	w.diagnostic.Load().recordWrite(payload, errWrite)
 	errClose := w.conn.Close()
 	if errWrite != nil {
 		return false, errWrite
@@ -187,6 +190,7 @@ func (w *responsesWebsocketWriter) closeForUpstreamDisconnect(err error) {
 	if w == nil || w.conn == nil {
 		return
 	}
+	w.diagnostic.Load().recordError(err, true)
 	if matched, _ := w.closeForUpstreamError(err); matched {
 		return
 	}
@@ -271,6 +275,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		return
 	}
 	writer := newResponsesWebsocketWriter(conn)
+	connectionRequestID := logging.GetGinRequestID(c)
 	passthroughSessionID := uuid.NewString()
 	downstreamSessionKey := websocketDownstreamSessionKey(c.Request)
 	retainResponsesWebsocketToolCaches(downstreamSessionKey)
@@ -310,6 +315,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 
 	var wsTerminateErr error
 	defer func() {
+		writer.finishDiagnostic(c, wsTerminateErr)
 		releaseResponsesWebsocketToolCaches(downstreamSessionKey)
 		if wsTerminateErr != nil {
 			appendWebsocketTimelineDisconnect(wsTimelineLog, wsTerminateErr, time.Now())
@@ -390,6 +396,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	}
 
 	for {
+		writer.finishDiagnostic(c, nil)
 		msgType, payload, errReadMessage := conn.ReadMessage()
 		if errReadMessage != nil {
 			wsTerminateErr = errReadMessage
@@ -421,7 +428,9 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		if requestModelName == "" {
 			requestModelName = strings.TrimSpace(gjson.GetBytes(lastRequest, "model").String())
 		}
-		executionParent := context.WithValue(c.Request.Context(), "gin", c)
+		diagnostic := newResponsesWebsocketDiagnostics(c, connectionRequestID, requestModelName, payload)
+		writer.diagnostic.Store(diagnostic)
+		executionParent := logging.WithRequestID(context.WithValue(c.Request.Context(), "gin", c), diagnostic.requestID)
 		executionParent, routeOverridesModelResolution := h.PrepareStreamModelRoute(
 			executionParent,
 			h.HandlerType(),
@@ -652,7 +661,16 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		nativeRequest := util.IsCodexResponsesLiteRequest(payload, c.Request.Header)
 		var preserveNativeOutput atomic.Bool
 		pinnedAuthAttempted := false
-		cliCtx, cliCancel := h.GetContextWithCancel(h, c, executionParent)
+		cliCtx, cancel := h.GetContextWithCancel(h, c, executionParent)
+		diagnostic.ctx = cliCtx
+		cliCancel := handlers.APIHandlerCancelFunc(func(params ...interface{}) {
+			if len(params) == 1 {
+				if err, ok := params[0].(error); ok {
+					diagnostic.recordError(err, false)
+				}
+			}
+			cancel(params...)
+		})
 		cliCtx = cliproxyexecutor.WithDownstreamWebsocket(cliCtx)
 		if nativeWebsocketPassthrough && requestRequiresCurrentUpstreamWebsocket {
 			cliCtx = cliproxyexecutor.WithRequiredUpstreamWebsocket(cliCtx)

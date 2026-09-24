@@ -396,7 +396,7 @@ type preparedExecutorCall struct {
 	outputFormat    sdktranslator.Format
 }
 
-func (a *executorAdapter) prepareExecutorCall(req coreexecutor.Request, opts coreexecutor.Options) (preparedExecutorCall, error) {
+func (a *executorAdapter) prepareExecutorCall(ctx context.Context, req coreexecutor.Request, opts coreexecutor.Options) (preparedExecutorCall, error) {
 	inputRequested := executorInputFormat(req, opts)
 	requestedFormat := executorRequestedFormat(req, opts)
 	inputFormat, errInput := a.selectExecutorInputFormat(inputRequested)
@@ -411,7 +411,7 @@ func (a *executorAdapter) prepareExecutorCall(req coreexecutor.Request, opts cor
 	nativeReq := req
 	nativeOpts := opts
 	if inputRequested != "" && inputRequested != inputFormat {
-		nativeReq.Payload = sdktranslator.TranslateRequest(inputRequested, inputFormat, req.Model, req.Payload, opts.Stream)
+		nativeReq.Payload = helps.TranslateRequestWithCodexMultiAgentV2(ctx, opts.Headers, a.host.currentRuntimeConfig(), inputRequested, inputFormat, req.Model, req.Payload, opts.Stream)
 	}
 	nativeReq.Format = outputFormat
 	nativeOpts.SourceFormat = inputFormat
@@ -684,7 +684,7 @@ func (a *executorAdapter) Execute(ctx context.Context, auth *coreauth.Auth, req 
 		}
 	}()
 
-	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	prepared, errPrepare := a.prepareExecutorCall(ctx, req, opts)
 	if errPrepare != nil {
 		return coreexecutor.Response{}, errPrepare
 	}
@@ -742,7 +742,7 @@ func (a *executorAdapter) ExecuteStream(ctx context.Context, auth *coreauth.Auth
 		}
 	}()
 
-	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	prepared, errPrepare := a.prepareExecutorCall(ctx, req, opts)
 	if errPrepare != nil {
 		return nil, errPrepare
 	}
@@ -961,7 +961,7 @@ func (a *executorAdapter) CountTokens(ctx context.Context, auth *coreauth.Auth, 
 		}
 	}()
 
-	prepared, errPrepare := a.prepareExecutorCall(req, opts)
+	prepared, errPrepare := a.prepareExecutorCall(ctx, req, opts)
 	if errPrepare != nil {
 		return coreexecutor.Response{}, errPrepare
 	}

@@ -361,6 +361,27 @@ func (s *codexWebsocketSession) detachConnection(conn *websocket.Conn, lifecycle
 	return closer
 }
 
+// detachUpstreamForHTTP retires the old socket without disconnecting the client.
+// Keep the retained execution scope alive: it may also own the current HTTP
+// attempt, and is still released when the downstream execution session ends.
+func (s *codexWebsocketSession) detachUpstreamForHTTP() {
+	if s == nil {
+		return
+	}
+	s.connMu.Lock()
+	closer := s.connCloser
+	s.conn = nil
+	s.connCloser = nil
+	s.readerConn = nil
+	s.multiAgentV2OptimizedConn = nil
+	s.connMu.Unlock()
+	if closer != nil {
+		if err := closer.Close(); err != nil {
+			log.Debugf("codex: close websocket for HTTP fallback: %v", err)
+		}
+	}
+}
+
 func closeWebsocketAfterBindFailure(sess *codexWebsocketSession, conn *websocket.Conn, closer *websocketConnectionCloser) {
 	if conn == nil || closer == nil {
 		return

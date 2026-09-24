@@ -19,6 +19,23 @@ func normalizeResponsesWebsocketRequest(rawJSON []byte, lastRequest []byte, last
 	return normalizeResponsesWebsocketRequestWithMode(rawJSON, lastRequest, lastResponseOutput, true, true)
 }
 
+// responsesWebsocketHTTPReplayRequest keeps a shadow transcript without changing
+// the native websocket delta. Unknown parents must never be merged into it.
+func responsesWebsocketHTTPReplayRequest(rawJSON, lastRequest, lastResponseOutput []byte, lastResponseID string, pendingToolCallIDs []string) []byte {
+	previousID := strings.TrimSpace(gjson.GetBytes(rawJSON, "previous_response_id").String())
+	if previousID == "" && gjson.GetBytes(rawJSON, "type").String() == wsRequestTypeCreate {
+		return normalizeResponseTranscriptReplacement(rawJSON, lastRequest)
+	}
+	if len(lastRequest) == 0 || (previousID != "" && previousID != lastResponseID) {
+		return nil
+	}
+	full, _, errMsg := normalizeResponsesWebsocketRequestWithIncrementalState(rawJSON, lastRequest, lastResponseOutput, lastResponseID, pendingToolCallIDs, false, true)
+	if errMsg != nil {
+		return nil
+	}
+	return full
+}
+
 func normalizeResponsesWebsocketRequestWithMode(rawJSON []byte, lastRequest []byte, lastResponseOutput []byte, allowIncrementalInputWithPreviousResponseID bool, allowCompactionReplayBypass bool) ([]byte, []byte, *interfaces.ErrorMessage) {
 	return normalizeResponsesWebsocketRequestWithLastResponseID(rawJSON, lastRequest, lastResponseOutput, "", allowIncrementalInputWithPreviousResponseID, allowCompactionReplayBypass)
 }

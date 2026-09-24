@@ -35,7 +35,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	}
 
 	reporter := helps.NewExecutorUsageReporter(ctx, e, baseModel, auth)
-	defer reporter.TrackFailure(ctx, &err)
+	defer func() { reporter.TrackFailure(ctx, &err) }()
 
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
@@ -115,6 +115,17 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	}
 
 	wsReqBody := buildCodexWebsocketRequestBody(upstreamBody)
+	httpReq, httpOpts, useHTTP, fallbackErr := helps.CodexWebsocketHTTPFallback(ctx, wsReqBody, req, opts)
+	if fallbackErr != nil {
+		unlockStreamSession()
+		return nil, fallbackErr
+	}
+	if useHTTP {
+		sess.detachUpstreamForHTTP()
+		unlockStreamSession()
+		reporter = nil // The HTTP executor owns the single usage record.
+		return e.CodexExecutor.ExecuteStream(ctx, auth, httpReq, httpOpts)
+	}
 	wsReqLog := helps.UpstreamRequestLog{
 		URL:       wsURL,
 		Method:    "WEBSOCKET",

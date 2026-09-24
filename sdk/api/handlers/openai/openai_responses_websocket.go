@@ -634,6 +634,10 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			if modelName := strings.TrimSpace(gjson.GetBytes(requestJSON, "model").String()); modelName != "" {
 				passthroughModelName = modelName
 			}
+			nextLastRequest = nil
+			if pinnedAuth, ok := sessionAuthByID(pinnedAuthID); ok && strings.EqualFold(pinnedAuth.Provider, "codex") {
+				nextLastRequest = responsesWebsocketHTTPReplayRequest(requestJSON, lastRequest, lastResponseOutput, lastResponseID, lastResponsePendingToolCallIDs)
+			}
 		} else {
 			requestJSON, toolCacheTurn = prepareResponsesWebsocketFallbackTurn(downstreamSessionKey, requestJSON)
 			nextLastRequest = requestJSON
@@ -643,6 +647,8 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		lastAttemptedAuthID := pinnedAuthID
 		attemptedUpstreamMode := responsesWebsocketUpstreamModeUnknown
 		selectedAuthObserved := false
+		retainHTTPReplay := false
+		usedHTTPFallback := false
 		nativeRequest := util.IsCodexResponsesLiteRequest(payload, c.Request.Header)
 		var preserveNativeOutput atomic.Bool
 		pinnedAuthAttempted := false
@@ -652,8 +658,16 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			cliCtx = cliproxyexecutor.WithRequiredUpstreamWebsocket(cliCtx)
 		}
 		cliCtx = handlers.WithExecutionSessionID(cliCtx, passthroughSessionID)
+		cliCtx = cliproxyexecutor.WithWebsocketHTTPFallback(cliCtx, nextLastRequest, func() {
+			attemptedUpstreamMode = responsesWebsocketUpstreamModeHTTP
+			upstreamMode = responsesWebsocketUpstreamModeHTTP
+			upstreamWebsocketAuthID = ""
+			usedHTTPFallback = true
+		})
 		cliCtx = handlers.WithSelectedAuthIDCallback(cliCtx, func(authID string) {
 			preserveNativeOutput.Store(false)
+			retainHTTPReplay = false
+			usedHTTPFallback = false
 			authID = strings.TrimSpace(authID)
 			if authID == "" || h == nil || h.AuthManager == nil {
 				return
@@ -666,6 +680,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				return
 			}
 			attemptedUpstreamMode = upstreamModeForAuth(selectedAuth)
+			retainHTTPReplay = strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex")
 			preserveNativeOutput.Store(nativeRequest && strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex"))
 		})
 		executionAuthID := ""
@@ -745,12 +760,22 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				rememberPinnedAuth(lastAttemptedAuthID, modelName)
 			}
 			passthroughModelName = modelName
-			lastRequest = nil
-			lastResponseOutput = []byte("[]")
 			observedCompaction.clear()
-			lastResponseID = ""
-			lastResponsePendingToolCallIDs = nil
+			if retainHTTPReplay {
+				lastRequest = nextLastRequest
+				lastResponseOutput = completedOutput
+				lastResponseID = strings.TrimSpace(completedResponseID)
+				lastResponsePendingToolCallIDs = append([]string(nil), completedPendingToolCallIDs...)
+			} else {
+				lastRequest = nil
+				lastResponseOutput = []byte("[]")
+				lastResponseID = ""
+				lastResponsePendingToolCallIDs = nil
+			}
 		} else {
+			if usedHTTPFallback && lastAttemptedAuthID != "" {
+				rememberPinnedAuth(lastAttemptedAuthID, modelName)
+			}
 			upstreamWebsocketAuthID = ""
 			lastRequest = nextLastRequest
 			lastResponseOutput = completedOutput
